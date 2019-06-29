@@ -8,16 +8,19 @@ const BigNumber = require('bignumber.js')
 const colors = require("colors")
 const _ = require('lodash')
 const fs = require('fs')
-const ora = require('ora')
 
 const PORT = process.env.PORT || 4000
 const INDEX = path.join(__dirname, 'index.html')
 
 //////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////
+//         PLEASE EDIT THE FOLLOWING VARIABLES JUST BELLOW
+//////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////
 
-const insert_into_files = false        // to save pair data to txt files in the data sub-folder 
-const send_signal_to_bva = false       // to monitor your strategies and send your signals to NBT Hub a.k.a http://bitcoinvsaltcoins.com
-const bva_ws_key = ""                 // if send_signal_to_bva true, please enter your ws key that you will find after signing up at http://bitcoinvsaltcoins.com
+const insert_into_files = false                 // to back up pair data to txt files in the data sub-folder 
+const send_signal_to_bva = false                // to monitor your strategies and send your signals to NBT Hub a.k.a http://bitcoinvsaltcoins.com
+const bva_key = "replace_with_your_BvA_key"     // if send_signal_to_bva true, please enter your ws key that you will find after signing up at http://bitcoinvsaltcoins.com
 
 const tracked_max = 200             // max of pairs to be tracked (useful for testing)
 const wait_time = 800               // to time out binance api calls (a lower number than 800 can result in api rstriction)
@@ -25,7 +28,9 @@ const wait_time = 800               // to time out binance api calls (a lower nu
 const stop_loss_pnl = -0.41         // to set your stop loss per trade
 const stop_profit_pnl = 1.81        // to set your stop profit per trade
 
-/////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////
 
 console.log("insert_into_files: ", insert_into_files)
 console.log("send_signal_to_bva: ", send_signal_to_bva)
@@ -35,8 +40,9 @@ console.log("send_signal_to_bva: ", send_signal_to_bva)
 let socket_client = {}
 if (send_signal_to_bva) { 
     console.log("Connection to NBT HUB...")
+    const nbt_vers = "0.1.4"
     // create a socket client connection to send your signals to NBT Hub (http://bitcoinvsaltcoins.com)
-    socket_client = io_client('https://nbt-hub.herokuapp.com', { query: "key=" + bva_ws_key }) 
+    socket_client = io_client('https://nbt-hub.herokuapp.com', { query: "v="+nbt_vers+"&type=server&key=" + bva_key }) 
 }
 
 /////////////////////
@@ -60,7 +66,6 @@ let candle_closes = {}
 let candle_lowes = {}
 let candle_highs = {}
 let candle_volumes = {}
-let candle_ohlcv = {}
 let signaled_pairs = {}
 let buy_prices = {}
 
@@ -84,10 +89,6 @@ io.on('connection', (socket) => {
 const binance_client = binance()
 
 //////////////////////////////////////////////////////////////////////////////////
-
-const report = ora('Starting NBT server...'.grey)
-report.start()
-report.text = ""
 
 async function run() {
     pairs = await get_pairs()
@@ -138,10 +139,7 @@ async function trackPairData(pair) {
     candle_highs[pair] = []
     candle_lowes[pair] = []
     candle_volumes[pair] = []
-    candle_ohlcv[pair] = []
     prev_price = new BigNumber(0)
-    prev_bid = new BigNumber(0)
-    prev_ask = new BigNumber(0)
     interv_vols_sum[pair] = new BigNumber(0)
 
     const candles_15 = await binance_client.candles({ symbol: pair, interval: '15m' })
@@ -149,35 +147,20 @@ async function trackPairData(pair) {
         candle_closes[pair].push(Number(candles_15[i].close))
         candle_lowes[pair].push(Number(candles_15[i].low))
         candle_highs[pair].push(Number(candles_15[i].high))
+        candle_opens[pair].push(Number(candles_15[i].open))
         candle_volumes[pair].push(Number(candles_15[i].volume))
-        candle_volumes[pair].push(Number(candles_15[i].volume))
-        candle_ohlcv[pair].push([
-            Number(candles_15[i].closeTime),
-            Number(candles_15[i].open),
-            Number(candles_15[i].high),
-            Number(candles_15[i].low),
-            Number(candles_15[i].close),
-            Number(candles_15[i].volume),
-        ])
     }
 
     await sleep(wait_time)
 
     const candles_clean = binance_client.ws.candles(pair, '15m', async candle => {
+
         if (candle.isFinal) {
             candle_opens[pair].push(Number(candle.open))
             candle_closes[pair].push(Number(candle.close))
             candle_lowes[pair].push(Number(candle.low))
             candle_highs[pair].push(Number(candle.high))
             candle_volumes[pair].push(Number(candle.volume))
-            candle_ohlcv[pair].push([
-                Number(candle.closeTime),
-                Number(candle.open),
-                Number(candle.high),
-                Number(candle.low),
-                Number(candle.close),
-                Number(candle.volume),
-            ])
         }
         else {
             candle_opens[pair][candle_opens[pair].length-1] = Number(candle.open)
@@ -185,18 +168,7 @@ async function trackPairData(pair) {
             candle_lowes[pair][candle_lowes[pair].length-1] = Number(candle.low)
             candle_highs[pair][candle_highs[pair].length-1] = Number(candle.high)
             candle_volumes[pair][candle_volumes[pair].length-1] = Number(candle.volume)
-            candle_ohlcv[pair].push([
-                Number(candle.closeTime),
-                Number(candle.open),
-                Number(candle.high),
-                Number(candle.low),
-                Number(candle.close),
-                Number(candle.volume),
-            ])
         }
-
-        const max_sum_asks_bn = new BigNumber(_.max(sum_asks[pair]))
-        const min_sum_asks_bn = new BigNumber(_.min(sum_asks[pair]))
 
         //////////////////////////////////////////////////////////////////////////////////////////
 
@@ -205,35 +177,29 @@ async function trackPairData(pair) {
         let stratname, signal_key
 
 
+
+        /////////////////////////////////////////////////////////////////////////////////////////////
         //////////////////////////////// SIGNAL DECLARATION - START /////////////////////////////////
         //////////////////////////////// THIS IS WHERE YOU CODE YOUR STRATEGY ///////////////////////
         /////////////////////////////////////////////////////////////////////////////////////////////
-
-        stratname = "NBT SIGNAL TEST"                   // enter the name of your strategy
+        stratname = "NBT SIGNAL DEMO"                   // enter the name of your strategy
         signal_key = stratname.replace(/\s+/g, '')
-        
         //////// BUY SIGNAL DECLARATION ///////
         if ( interv_vols_sum[pair].times(first_ask_price[pair]).isGreaterThan(1.0) 
-            && trades[pair].length >= 333
+            && trades[pair].length >= 666
             && first_ask_price[pair].dividedBy(first_bid_price[pair]).minus(1.0).isLessThan(0.003)
             && candle_closes[pair][candle_closes[pair].length-1] > 0.0001
             && candle_closes[pair][candle_closes[pair].length-1] > _.mean(candle_closes[pair].slice(-3, candle_closes[pair].length-1))
-            && trades[pair][trades[pair].length-1] > 99
-            && _.mean(trades[pair].slice(-3, trades[pair].length-1)) > 27
-            && trades[pair][trades[pair].length-1] > _.mean(trades[pair].slice(-333)) * 9
+            && trades[pair][trades[pair].length-1] > 33
+            && _.mean(trades[pair].slice(-3, trades[pair].length-1)) > 17
+            && trades[pair][trades[pair].length-1] > _.mean(trades[pair].slice(-666)) * 6.666
             && !signaled_pairs[pair+signal_key]
         ) {
             signaled_pairs[pair+signal_key] = true
             buy_prices[pair+signal_key] = first_ask_price[pair]
-            report.stop()
-            console.log(pair.green + " BUY =>   " + stratname.green 
-                + " " + interv_vols_sum[pair].times(first_ask_price[pair]).toFormat(2))
-                + " " + trades[pair][trades[pair].length-1]
-                + " " + _.mean(trades[pair].slice(-6, trades[pair].length-1)
-            )
-            report.start()
+            console.log(moment().format().padEnd(30)+ " BUY => " + pair.green + " " + stratname.green)
             const buy_signal = {
-                key: bva_ws_key,
+                key: bva_key,
                 stratname: stratname,
                 pair: pair, 
                 buy_price: first_ask_price[pair]
@@ -249,11 +215,9 @@ async function trackPairData(pair) {
             && signaled_pairs[pair+signal_key]
         ) {
             signaled_pairs[pair+signal_key] = false
-            report.stop()
-            console.log(pair.red + " SELL =>   " + stratname.red)
-            report.start()
+            console.log(moment().format().padEnd(30)+ " SELL => " + pair.red + " " + stratname.red + " " + pnl.toFormat(2) + "%")
             const sell_signal = {
-                key: bva_ws_key,
+                key: bva_key,
                 stratname: stratname, 
                 pair: pair, 
                 sell_price: first_bid_price[pair]
@@ -261,16 +225,71 @@ async function trackPairData(pair) {
             io.emit('sell_signal', sell_signal)
             if (send_signal_to_bva) { socket_client.emit("sell_signal", sell_signal) }
         }
-
+        ///////////////////////////////////////////////////////////////////////////////////////////
         //////////////////////////////// SIGNAL DECLARATION - END /////////////////////////////////
         ///////////////////////////////////////////////////////////////////////////////////////////
 
+
+
+        /////////////////////////////////////////////////////////////////////////////////////////////
+        //////////////////////////////// ANOTHER SIGNAL DECLARATION - START /////////////////////////
+        //////////////////////////////// THIS IS WHERE YOU CODE YOUR STRATEGY ///////////////////////
+        /////////////////////////////////////////////////////////////////////////////////////////////
+        stratname = "NBT SIGNAL DEMO 2"                   // enter the name of your strategy
+        signal_key = stratname.replace(/\s+/g, '')
+        //////// BUY SIGNAL DECLARATION ///////
+        if ( interv_vols_sum[pair].times(first_ask_price[pair]).isGreaterThan(1.0) 
+            && trades[pair].length >= 666
+            && first_ask_price[pair].dividedBy(first_bid_price[pair]).minus(1.0).isLessThan(0.002)
+            && candle_closes[pair][candle_closes[pair].length-1] > 0.001
+            && candle_closes[pair][candle_closes[pair].length-1] > _.mean(candle_closes[pair].slice(-3, candle_closes[pair].length-1))
+            && trades[pair][trades[pair].length-1] > 66
+            && _.mean(trades[pair].slice(-3, trades[pair].length-1)) > 17
+            && trades[pair][trades[pair].length-1] > _.mean(trades[pair].slice(-666)) * 6.666
+            && !signaled_pairs[pair+signal_key]
+        ) {
+            signaled_pairs[pair+signal_key] = true
+            buy_prices[pair+signal_key] = first_ask_price[pair]
+            console.log(moment().format().padEnd(30)+ " BUY => " + pair.green + " " + stratname.green)
+            const buy_signal = {
+                key: bva_key,
+                stratname: stratname,
+                pair: pair, 
+                buy_price: first_ask_price[pair]
+            }
+            io.emit('buy_signal', buy_signal)
+            if (send_signal_to_bva) { socket_client.emit("buy_signal", buy_signal) }
+        }
+        //////// SELL SIGNAL DECLARATION ///////
+        curr_price = BigNumber(first_bid_price[pair])
+        pnl = curr_price.minus(buy_prices[pair+signal_key]).times(100).dividedBy(buy_prices[pair+signal_key])
+        if ( candle_closes[pair][candle_closes[pair].length-1] < candle_closes[pair][candle_closes[pair].length-2]
+            && (pnl.isLessThan(stop_loss_pnl) || pnl.isGreaterThan(stop_profit_pnl+2))
+            && signaled_pairs[pair+signal_key]
+        ) {
+            signaled_pairs[pair+signal_key] = false
+            console.log(moment().format().padEnd(30)+ " SELL => " + pair.red + " " + stratname.red + " " + pnl.toFormat(2) + "%")
+            const sell_signal = {
+                key: bva_key,
+                stratname: stratname, 
+                pair: pair, 
+                sell_price: first_bid_price[pair]
+            }
+            io.emit('sell_signal', sell_signal)
+            if (send_signal_to_bva) { socket_client.emit("sell_signal", sell_signal) }
+        }
+        ///////////////////////////////////////////////////////////////////////////////////////////
+        //////////////////////////////// SIGNAL DECLARATION - END /////////////////////////////////
+        ///////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+        // ADD MORE SIGNAL DECLARATIONS HERE BY COPY/PASTE/EDIT FROM ONE DECLARATION FROM ABOVE. //
 
     })
 
     await sleep(wait_time)
 
-    //console.log(colors.grey('scanning '+pair+' depth...'))
     const depth_clean = binance_client.ws.partialDepth({ symbol: pair, level: 10 }, depth => {
         sum_bids[pair].push(_.sumBy(depth.bids, (o) => { return Number(o.quantity) }))
         sum_asks[pair].push(_.sumBy(depth.asks, (o) => { return Number(o.quantity) }))
@@ -282,7 +301,6 @@ async function trackPairData(pair) {
 
     await sleep(wait_time)
 
-    //console.log(colors.grey('scanning '+pair+' trades...'))
     const trades_clean = binance_client.ws.trades([pair], trade => {
         prices[pair] = BigNumber(trade.price)
         volumes[pair].unshift({
@@ -319,18 +337,6 @@ async function trackPairData(pair) {
         const makers_total = new BigNumber(makers[pair].length)
         const maker_ratio = makers_count > 0 ? makers_count.dividedBy(makers_total).times(100) : new BigNumber(0)
 
-        //if (pair === "BTCUSDT") {
-            report.text = moment().format().grey.padStart(20) +
-            pair.white.padStart(20) +
-            (prev_price.isEqualTo(prices[pair]) ? colors.grey(prices[pair].toString()).padStart(30) : prev_price.isLessThan(prices[pair].toString()) ? colors.green(prices[pair].toString()).padStart(30) : colors.red(prices[pair].toString()).padStart(30)) + 
-            colors.white(interv_vols_sum[pair].decimalPlaces(3).toString()).padStart(30) +
-            colors.blue(trades[pair][trades[pair].length-1]).padStart(20) +
-            colors.yellow(maker_ratio.decimalPlaces(2).toString() + "%").padStart(20) +
-            depth_report_colored.padStart(20) +
-            colors.grey(last_sum_bids_bn.toFormat(2)).padStart(30) +
-            colors.grey(last_sum_asks_bn.toFormat(2)).padStart(30)
-        //}
-
         if (prices[pair].isGreaterThan(0) && last_sum_bids_bn.isGreaterThan(0) && last_sum_asks_bn.isGreaterThan(0)) {
                 
             const insert_values = [
@@ -353,18 +359,18 @@ async function trackPairData(pair) {
             // FILE INSERT
             if (insert_into_files) {
                 const log_report = moment().format().padStart(30) +
-                        pair.padStart(20) +
-                        prices[pair].toString().padStart(30) +
-                        interv_vols_sum[pair].decimalPlaces(3).toString().padStart(30) +
-                        String(volumes[pair].length).padStart(20) +
-                        maker_ratio.decimalPlaces(2).toString().padStart(20) +
-                        depth_report.padStart(30) +
-                        last_sum_bids_bn.decimalPlaces(3).toString().padStart(30) +
-                        last_sum_asks_bn.decimalPlaces(3).toString().padStart(30) +
-                        first_bid_price[pair].toString().padStart(30) +
-                        first_bid_qty[pair].decimalPlaces(6).toString().padStart(30) +
-                        first_ask_qty[pair].decimalPlaces(6).toString().padStart(30) +
-                        first_ask_price[pair].toString().padStart(30)
+                    pair.padStart(20) +
+                    prices[pair].toString().padStart(30) +
+                    interv_vols_sum[pair].decimalPlaces(3).toString().padStart(30) +
+                    String(volumes[pair].length).padStart(20) +
+                    maker_ratio.decimalPlaces(2).toString().padStart(20) +
+                    depth_report.padStart(30) +
+                    last_sum_bids_bn.decimalPlaces(3).toString().padStart(30) +
+                    last_sum_asks_bn.decimalPlaces(3).toString().padStart(30) +
+                    first_bid_price[pair].toString().padStart(30) +
+                    first_bid_qty[pair].decimalPlaces(6).toString().padStart(30) +
+                    first_ask_qty[pair].decimalPlaces(6).toString().padStart(30) +
+                    first_ask_price[pair].toString().padStart(30)
                 fs.appendFileSync( "data/" + nbt_prefix + pair + ".txt", log_report + "\n" )
             }
         }
