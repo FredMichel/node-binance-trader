@@ -3,7 +3,7 @@
     "private": true,
     "version": "0.5.0",
     "engine": {
-        "node": ">=12"
+        "node": ">=12 <17"
     },
     "description": "An efficient cryptocurrency trading bot development framework for Binance using Node.js",
     "main": "./src/server.js",
@@ -37,7 +37,7 @@
         "axios": "0.26.1",
         "bignumber.js": "9.0.2",
         "binance-api-node": "0.11.35",
-        "ccxt": "1.79.84",
+        "ccxt": "1.95.43",
         "dotenv": "16.0.0",
         "envalid": "7.3.1",
         "express": "4.17.3",
